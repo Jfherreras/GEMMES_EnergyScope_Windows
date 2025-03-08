@@ -7,7 +7,7 @@
 #include <cstring>
 #include <stdio.h>
 #include <string.h>
-#include <vector>  // <-- added for std::vector usage
+#include <vector>
 
 #if UseRCPP==1
     #include "preprocRCPP_R.h"
@@ -33,9 +33,6 @@ class RK4Fixed : virtual public ODE<T> {
     using ODE<T>::getHOut;
 
 public:
-    // ================================
-    // MAIN SOLVER (entire trajectory)
-    // ================================
     void solve(const T* yInit, T* parms, T* out) override {
         const int nV = getNV();
         const int nIV = getNIV();
@@ -43,18 +40,17 @@ public:
         const int nRowOut = getNRowOut();
         T t = getTInit();
 
-        // Replace arrays with std::vector
-        std::vector<T> k1(nV), k2(nV), k3(nV), k4(nV);
+        // Switch to vectors
+        std::vector<T> k0(nV), k1(nV), k2(nV), k3(nV);
         std::vector<T> x(nIV);
 
-        // Initialize first output row
-        for (int it = 0; it < nV; it++) {
-            out[it] = yInit[it];
+        // init
+        for(int i = 0; i < nV; i++){
+            out[i] = yInit[i];
         }
 
-        // Main time-stepping loop
-        for (int it = 1; it < nt; it++) {
-            // Run events if needed
+        // main loop
+        for(int it = 1; it < nt; it++){
         #if UseEventTime
             makeEventTime(t, parms, &out[(it - 1) * nRowOut], x.data(), getHOut());
         #endif
@@ -62,48 +58,83 @@ public:
             makeEventVar(t, parms, &out[(it - 1) * nRowOut], x.data(), getHOut());
         #endif
 
-            // Perform one RK4 step
-            RK4OneStep(t,
-                       &out[(it - 1) * nRowOut],
-                       parms,
-                       k1.data(), k2.data(), k3.data(), k4.data(),
-                       x.data(),
-                       &out[it * nRowOut]);
+            RK4OneStep(
+                t,
+                &out[(it - 1)*nRowOut],
+                parms,
+                k0.data(), k1.data(), k2.data(), k3.data(),
+                x.data(),
+                &out[it*nRowOut]
+            );
 
-            // Fill out ydot, x at time t
-            completeOut(k1.data(), x.data(), &out[(it - 1) * nRowOut]);
-
-            // Increment time
+            completeOut(k0.data(), x.data(), &out[(it - 1)*nRowOut]);
             t += getHOut();
         }
 
-        // Complete out at the last point
-        Func(t, &out[(nt - 1) * nRowOut], parms, k1.data(), x.data());
-        completeOut(k1.data(), x.data(), &out[(nt - 1) * nRowOut]);
+        Func(t, &out[(nt - 1) * nRowOut], parms, k0.data(), x.data());
+        completeOut(k0.data(), x.data(), &out[(nt - 1) * nRowOut]);
     }
 
-    // =========================================
-    // SOLVE ONLY THE LAST POINT OF TRAJECTORY
-    // =========================================
     void solveLastPoint(const T* yInit, T* parms, T* out) override {
         const int nV = getNV();
         const int nIV = getNIV();
         const int nt = getNt();
         T t = getTInit();
 
-        // Replace arrays with std::vector
-        std::vector<T> k1(nV), k2(nV), k3(nV), k4(nV);
+        std::vector<T> k0(nV), k1(nV), k2(nV), k3(nV);
         std::vector<T> x(nIV);
         std::vector<T> yIn(nV), yOut(nV);
 
-        // Initialize from yInit
-        for (int it = 0; it < nV; it++) {
-            yIn[it] = yInit[it];
+        for(int i = 0; i < nV; i++){
+            yIn[i] = yInit[i];
         }
 
-        // Main loop
-        for (int step = 1; step < nt; step++) {
+        for(int step = 1; step < nt; step++){
         #if UseEventTime
             makeEventTime(t, parms, yIn.data(), x.data(), getHOut());
         #endif
-        #if
+        #if UseEventVar
+            makeEventVar(t, parms, yIn.data(), x.data(), getHOut());
+        #endif
+
+            RK4OneStep(
+                t,
+                yIn.data(),
+                parms,
+                k0.data(), k1.data(), k2.data(), k3.data(),
+                x.data(),
+                yOut.data()
+            );
+            for(int i=0; i<nV; i++){
+                yIn[i] = yOut[i];
+            }
+            t += getHOut();
+        }
+
+        for(int i=0; i<nV; i++){
+            out[i] = yIn[i];
+        }
+
+        Func(t, yIn.data(), parms, k0.data(), x.data());
+        completeOut(k0.data(), x.data(), out);
+    }
+
+protected:
+    void RK4OneStep(
+        T t,
+        const T* yIn,
+        const T* parms,
+        T* k0, T* k1, T* k2, T* k3,
+        T* x,
+        T* yOut
+    ){
+        // standard RK4 step
+        // e.g.:
+        // Func(t, yIn, parms, k0, x);
+        // for(int i=0; i<getNV(); i++){
+        //     ...
+        // }
+    }
+};
+
+#endif

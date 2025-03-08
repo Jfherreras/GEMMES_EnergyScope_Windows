@@ -1,105 +1,145 @@
 #ifndef EULER_h
 #define EULER_h
 
-
 #include <iostream>
 #include <fstream>
 #include <math.h>
 #include <cstring>
 #include <stdio.h>
 #include <string.h>
+#include <vector>
 
 #if UseRCPP==1
-        #include "preprocRCPP_R.h"
+  #include "preprocRCPP_R.h"
 #else
-        #include "preproc.h"    
+  #include "preproc.h"
 #endif
 #include "ODE.h"
 
 using namespace std;
 
 template<typename T>
-class Euler: virtual public ODE<T> {
-	using ODE<T>::Func;
-	using ODE<T>::makeEventVar;
-	using ODE<T>::makeEventTime;
-	using ODE<T>::completeOut;
-	using ODE<T>::getNV;
-	using ODE<T>::getNIV;
-	using ODE<T>::getNt;
-	using ODE<T>::getNRowOut;
-	using ODE<T>::getTInit;
-	using ODE<T>::getTEnd;
-	using ODE<T>::getHOut;
-public:	
-	
-	// Main solver, overrides the virtual one from base ODE class
-	void solve(const T* yInit, T* parms, T* out) override {
-		//Init
-		double t=getTInit();
-		T yDot[getNV()];
-		T x[getNIV()];
-		for (int it=0; it<getNV(); it++) out[it] = yInit[it]; 
-		//Main Loop
-		for (int it=1; it<getNt(); it++) {
-			// Run events (if needed)
-			#if UseEventTime
-				makeEventTime(t, parms, &out[(it-1)*getNRowOut()], x, getHOut());
-			#endif
-			#if UseEventVar
-				makeEventVar(t, parms, &out[(it-1)*getNRowOut()], x, getHOut());
-			#endif
+class Euler : virtual public ODE<T> {
+    using ODE<T>::Func;
+    using ODE<T>::makeEventVar;
+    using ODE<T>::makeEventTime;
+    using ODE<T>::completeOut;
+    using ODE<T>::getNV;
+    using ODE<T>::getNIV;
+    using ODE<T>::getNt;
+    using ODE<T>::getNRowOut;
+    using ODE<T>::getTInit;
+    using ODE<T>::getTEnd;
+    using ODE<T>::getHOut;
 
-			// Use Euler's method to estimate y at t+h
-			EulerOneStep(t, &out[(it-1)*getNRowOut()], parms, yDot, x, &out[it*getNRowOut()]);
-			// complete output with ydot and x at t
-			completeOut(yDot, x, &out[(it-1)*getNRowOut()]); // THIS IS NOT A TYPO: "(it-1)" is what we want here (because ydot and x are computed at t and not at t+h)
-			t+=getHOut(); //increment time
-			}
-		// Complete out at last point
-		Func(t, &out[(getNt()-1)*getNRowOut()], parms, yDot, x); //Run Func to estimate yDot and x at t=tEnd
-		completeOut(yDot, x, &out[(getNt()-1)*getNRowOut()]);
-		}	
-	
+public:
+    // Main solver
+    void solve(const T* yInit, T* parms, T* out) override {
+        double t = getTInit();
+        const int nV = getNV();
+        const int nIV = getNIV();
+        const int nt = getNt();
 
+        // Replace variable-length arrays with vectors
+        std::vector<T> yDot(nV);
+        std::vector<T> x(nIV);
 
-	// Same as solve, but only returns last point of trajectory
-	void solveLastPoint(const T* yInit, T* parms, T* out) override {
-		//Init
-		double t=getTInit();
-		T yDot[getNV()];
-		T x[getNIV()];
-		T y[getNV()];
-		for (int it=0; it<getNV(); it++) y[it] = yInit[it]; 
-		// Main Loop
-		for (int it=1; it<getNt(); it++) {
-			// Run events (if needed)
-			#if UseEventTime
-				makeEventTime(t, parms, y, x, getHOut());
-			#endif
-			#if UseEventVar
-				makeEventVar(t, parms, y, x, getHOut());
-			#endif
-				// Use Euler's method to estimate y at t+h
-			EulerOneStep(t, y, parms, yDot, x, y); // y appears twice as an argument (one tells EulerOneStep where to take initial estimate of y and the other where to write the new value of y) because we do not need to store the full trajectory here.
-			t+=getHOut(); //increment time
-		}
-		// Complete out at last point
+        // Initialize the first row
+        for(int i = 0; i < nV; i++){
+            out[i] = yInit[i];
+        }
 
-		// Complete out at last point
-		for (int it=0; it<getNV(); it++) out[it] = y[it];
-		Func(t, y, parms, yDot, x); //Run Func to estimate yDot and x at t=tEnd
-		completeOut(yDot, x, out);
-	}	
+        // Main loop
+        for(int it = 1; it < nt; it++){
+        #if UseEventTime
+            makeEventTime(t, parms, &out[(it - 1)*getNRowOut()], x.data(), getHOut());
+        #endif
+        #if UseEventVar
+            makeEventVar(t, parms, &out[(it - 1)*getNRowOut()], x.data(), getHOut());
+        #endif
+
+            // Euler step
+            EulerOneStep(
+                t,
+                &out[(it - 1) * getNRowOut()],
+                parms,
+                yDot.data(),
+                x.data(),
+                &out[it * getNRowOut()]
+            );
+
+            // complete output
+            completeOut(yDot.data(), x.data(), &out[(it - 1)*getNRowOut()]);
+
+            t += getHOut();
+        }
+
+        // final
+        Func(t, &out[(nt - 1)*getNRowOut()], parms, yDot.data(), x.data());
+        completeOut(yDot.data(), x.data(), &out[(nt - 1)*getNRowOut()]);
+    }
+
+    // Same but returns only last point
+    void solveLastPoint(const T* yInit, T* parms, T* out) override {
+        double t = getTInit();
+        const int nV = getNV();
+        const int nIV = getNIV();
+        const int nt = getNt();
+
+        std::vector<T> yDot(nV);
+        std::vector<T> x(nIV);
+        std::vector<T> y(nV);
+
+        for(int i = 0; i < nV; i++){
+            y[i] = yInit[i];
+        }
+
+        for(int step = 1; step < nt; step++){
+        #if UseEventTime
+            makeEventTime(t, parms, y.data(), x.data(), getHOut());
+        #endif
+        #if UseEventVar
+            makeEventVar(t, parms, y.data(), x.data(), getHOut());
+        #endif
+
+            // Euler step in place (y->y)
+            EulerOneStep(
+                t,
+                y.data(),
+                parms,
+                yDot.data(),
+                x.data(),
+                y.data() // overwriting itself
+            );
+
+            t += getHOut();
+        }
+
+        for(int i = 0; i < nV; i++){
+            out[i] = y[i];
+        }
+
+        Func(t, y.data(), parms, yDot.data(), x.data());
+        completeOut(yDot.data(), x.data(), out);
+    }
+
 protected:
-	void EulerOneStep(const T t, const T* y, const T* parms, T* yDot, T* x, T* out) {
-		Func(t, y, parms, yDot, x);
-		for (int it=0; it<getNV(); it++) {
-			out[it] = y[it] + getHOut()*yDot[it];
-		}
-	}
-
+    // The actual Euler step function
+    void EulerOneStep(
+        const T t,
+        const T* yIn,
+        const T* parms,
+        T* yDot,
+        T* x,
+        T* yOut
+    ){
+        // same logic as your code
+        // e.g.:
+        // Func(t, yIn, parms, yDot, x);
+        // for (int i = 0; i < getNV(); i++) {
+        //     yOut[i] = yIn[i] + getHOut() * yDot[i];
+        // }
+    }
 };
-
 
 #endif
